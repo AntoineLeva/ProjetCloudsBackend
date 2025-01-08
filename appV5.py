@@ -1,9 +1,13 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Importer CORS
+app = Flask(__name__)
+CORS(app)
 import os
 import shutil
 import paramiko
 
 app = Flask(__name__)
+CORS(app)
 
 def remove_readonly(func, path, _):
     """Change les permissions et supprime les fichiers en lecture seule."""
