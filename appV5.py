@@ -86,7 +86,7 @@ def deploy():
 
         # Étape 2 : Cloner le dépôt GitHub
         print(f"Clonage du dépôt {repo_url} dans {temp_clone_dir}...")
-        os.system(f"git clone {repo_url} {temp_clone_dir}")
+        os.system(f'git clone "{repo_url}" "{temp_clone_dir}"')
 
         # Vérification que le clonage a réussi
         if not os.path.isdir(temp_clone_dir):
@@ -146,9 +146,5 @@ def deploy():
         print(f"Erreur générale : {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-
-
-
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5001)  # Changer le port ici
