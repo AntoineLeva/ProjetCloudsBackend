@@ -111,7 +111,7 @@ def clone_repository(data):
 # Étape 2 : Vérifier les TU
 def verif_TU(data):
     print(f"Vérficiation des tests unitaires")
-    maven_command = 'mvn test -f "C:\\Users\\cales\\Documents\\projet-cicd-back\\ProjetCloudsBackend\\temp_repo\\pom.xml"'
+    maven_command = f'mvn test -f "{os.path.join(data.temp_clone_dir, "pom.xml")}"'
     
     try:
         exit_code = os.system(maven_command)
@@ -125,6 +125,8 @@ def verif_TU(data):
         print(f"Erreur lors de l'exécution de Maven : {e}")
         print(f"Code de retour : {e.returncode}")
         print(f"Sortie d'erreur : {e.stderr}") 
+
+# Étape 3 : 
 
 # Étape 3 : Transfert vers la VM
 def transfer_to_vm(data):
