@@ -37,8 +37,8 @@ class PipelineData:
         self.user = user
         self.password = password
         self.repo_url = repo_url
-        self.temp_clone_dir = os.path.join(os.getcwd(), 'temp_repo')  # Dossier temporaire pour cloner le dépôt
-        print(self.temp_clone_dir)
+        parent_dir = os.path.dirname(os.getcwd())
+        self.temp_clone_dir = os.path.join(parent_dir, 'temp_repo')  # Dossier temporaire pour cloner le dépôt
 
 class Step:
     def __init__(self, name, function):
@@ -222,14 +222,17 @@ def sonar_qube(data):
 # Définition des étapes
 steps = [
     Step("Cloner le dépôt GitHub", clone_repository),
-    Step("Vérifier les tests unitaires", verif_TU),
-    Step("Transfert du code sur la VM", transfer_to_vm),
-    Step("Arrêt et suppression des conteneurs en cours sur la VM", stop_delete_docker_container),
-    Step("Créer un backup de l'image existante", create_backup),
-    Step("Supprimer l'ancienne image", delete_image_copy),
-    Step("Lancement de Docker Compose sur la VM", lauch_docker_compose),
-    Step("Vérification de SonarQube", sonar_qube)
+    Step("Cloner le dépôt GitHub 2", clone_repository),
+    # Step("Vérifier les tests unitaires", verif_TU),
+    # Step("Transfert du code sur la VM", transfer_to_vm),
+    # Step("Arrêt et suppression des conteneurs en cours sur la VM", stop_delete_docker_container),
+    # Step("Créer un backup de l'image existante", create_backup),
+    # Step("Supprimer l'ancienne image", delete_image_copy),
+    # Step("Lancement de Docker Compose sur la VM", lauch_docker_compose),
+    # Step("Vérification de SonarQube", sonar_qube)
 ]
+
+pipelines_dir = 'pipelines'
 
 class Pipeline:
     def __init__(self, steps, state_file="pipeline_state.json"):
@@ -240,23 +243,48 @@ class Pipeline:
         try:
             with open(self.state_file, "r") as f:
                 pipeline = json.load(f)
-                date_actuelle = datetime.now()
-                date_cle = date_actuelle.strftime("%Y-%m-%d %H:%M:%S")
-                pipeline["logs"][date_cle] = {step.name: step.status for step in self.steps}
-                json.dumb(pipeline, f, indent=4)
+
+            creation_date = pipeline["datas"]["creation_date"]
+            last_run_date = pipeline["datas"]["last_run_date"]
+            if last_run_date != "":
+                pipeline["logs"][last_run_date] = {step.name: step.status for step in self.steps}
+            else:
+                pipeline["logs"][creation_date] = {step.name: step.status for step in self.steps}
+
+            with open(self.state_file, "w") as f:
+                json.dump(pipeline, f, indent=4)
         except FileNotFoundError:
             pass
 
     def load_state(self):
         try:
             with open(self.state_file, "r") as f:
-                state = json.load(f)
-            for step in self.steps:
-                step.status = state.get(step.name, "pending")
+                pipeline = json.load(f)
+                # if date == "":
+                for step in self.steps:
+                    step.status = "pending"
+                # else:
+                    # log = pipeline["logs"][date]
+                    # for step in self.steps:
+                    #     step.status = log[step.name]
         except FileNotFoundError:
             pass
 
     def run(self, data):
+        try:
+            with open(self.state_file, "r+") as f:
+                pipeline = json.load(f)
+                
+            last_run_date = pipeline["datas"]["last_run_date"]
+            self.load_state()
+            date_actuelle = datetime.now()
+            date = date_actuelle.strftime("%Y-%m-%d %H:%M:%S")
+            pipeline["datas"]["last_run_date"] = date
+
+            with open(self.state_file, "w") as f:
+                json.dump(pipeline, f, indent=4)
+        except FileNotFoundError:
+            pass
         for step in self.steps:
             if step.status in ["pending", "failed"]:
                 try:
@@ -266,9 +294,24 @@ class Pipeline:
                 finally:
                     self.save_state()
 
+def run_process(repo_url, data):
+    try:
+        file_name = os.path.join(pipelines_dir, extract_repo_info(repo_url))
+
+        pipeline = Pipeline(steps, file_name)
+        pipeline.run(data)
+    except Exception as e:
+        print(f"Erreur dans le processus de pipeline pour {repo_url}: {e}")
+
+# Fonction utilitaire pour lire l'état de la pipeline
+def get_pipeline_state(file_name):
+    if os.path.exists(file_name):
+        with open(file_name, "r") as f:
+            return json.load(f)
+    return {}  # Si le fichier n'existe pas, retourne un état vide
+
 @app.route('/create-pipeline', methods=['POST'])
 def create_pipeline():
-    
     # Récupérer les données de la requête
     data = request.json or {}
     vm_ip = data.get('vm_ip', '192.168.66.192')
@@ -286,46 +329,19 @@ def create_pipeline():
             "vm_ip": vm_ip,
             "user": user,
             "password": password,
-            "repo_url": repo_url
+            "repo_url": repo_url,
+            "last_run_date": "",
         },
-        "logs": {
-            date_cle: {step.name: step.status for step in steps}
-        }
+        "logs": {}
     }
-    with open(file_name, "w") as f:
-        json.dump(pipeline, f, indent=4)
 
-    # pipeline = Pipeline(steps, file_name)
-    # pipeline.save_state()
+    if not os.path.exists(pipelines_dir):
+        os.makedirs(pipelines_dir)
+
+    with open(os.path.join(pipelines_dir, file_name), "w") as f:
+        json.dump(pipeline, f, indent=4)
     
     return jsonify({"message": "Pipeline crée"})
-
-# Création de la pipeline
-# pipeline = Pipeline(steps)
-
-def run_process(repo_url, data):
-    try:
-        file_name = extract_repo_info(repo_url)
-
-        try:
-            with open(file_name, "r+") as f:
-                pipeline = json.load(f)
-                date_actuelle = datetime.now()
-                date_cle = date_actuelle.strftime("%Y-%m-%d %H:%M:%S")
-                pipeline["logs"][date_cle] = {step.name: step.status for step in steps}
-                json.dump(pipeline, f, indent=4)
-        except FileNotFoundError:
-            print(f"Erreur dans le processus de pipeline pour {repo_url}: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 500
-
-        pipeline = Pipeline(steps, file_name)
-        # pipeline.load_state()
-        # pipeline.run(data)
-        return jsonify({"status": "validé"}), 200
-    except Exception as e:
-        print(f"Erreur dans le processus de pipeline pour {repo_url}: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
 
 @app.route('/start-pipeline', methods=['POST'])
 def start_pipeline():
@@ -345,12 +361,50 @@ def start_pipeline():
 
     return jsonify({"message": "Processus démarré"})
 
-# Fonction utilitaire pour lire l'état de la pipeline
-def get_pipeline_state(file_name):
-    if os.path.exists(file_name):
-        with open(file_name, "r") as f:
-            return json.load(f)
-    return {}  # Si le fichier n'existe pas, retourne un état vide
+@app.route('/get-all-pipelines', methods=['POST'])
+def get_all_pipelines():
+    all_data = []
+
+    # Vérifie si le dossier existe
+    if not os.path.exists(pipelines_dir):
+        return {"error": "Le dossier 'pipelines' n'existe pas."}
+
+    # Parcours tous les fichiers dans le dossier 'pipelines'
+    for file_name in os.listdir(pipelines_dir):
+        file_path = os.path.join(pipelines_dir, file_name)
+        if os.path.isfile(file_path) and file_name.endswith('.json'):
+            try:
+                # Lecture du contenu JSON
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+
+                # Récupère le dernier log s'il existe
+                if "logs" in data:
+                    logs = data["logs"]
+                    if logs:
+                        # Trie les logs par date et récupère le dernier
+                        last_log_date = max(logs.keys(), key=lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S"))
+                        last_log = {
+                            "date": last_log_date,
+                            "log": logs[last_log_date]
+                        }
+                    else:
+                        last_log = None
+                else:
+                    last_log = None
+
+                # Ajoute les données et le dernier log
+                data_with_last_log = {
+                    "datas": data.get("datas", {}),
+                    # "logs": data.get("logs", {}),
+                    "last_log": last_log
+                }
+                all_data.append(data_with_last_log)
+            except Exception as e:
+                print(f"Erreur de lecture du fichier {file_name}: {e}")
+
+    return {"pipelines": all_data}
+    
 
 @app.route('/get-pipeline-status', methods=['POST'])
 def get_pipeline_status():
