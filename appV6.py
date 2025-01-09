@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import os
 import shutil
@@ -236,9 +237,15 @@ class Pipeline:
         self.state_file = state_file
         
     def save_state(self):
-        state = {step.name: step.status for step in self.steps}
-        with open(self.state_file, "w") as f:
-            json.dump(state, f, indent=4)
+        try:
+            with open(self.state_file, "r") as f:
+                pipeline = json.load(f)
+                date_actuelle = datetime.now()
+                date_cle = date_actuelle.strftime("%Y-%m-%d %H:%M:%S")
+                pipeline["logs"][date_cle] = {step.name: step.status for step in self.steps}
+                json.dumb(pipeline, f, indent=4)
+        except FileNotFoundError:
+            pass
 
     def load_state(self):
         try:
@@ -270,9 +277,28 @@ def create_pipeline():
     repo_url = data.get('repo_url', 'https://github.com/AntoineLeva/ProjetClouds.git')
 
     file_name = extract_repo_info(repo_url)
-    pipeline = Pipeline(steps, file_name)
-    pipeline.save_state()
-    return
+    
+    date_actuelle = datetime.now()
+    date_cle = date_actuelle.strftime("%Y-%m-%d %H:%M:%S")
+    pipeline = {
+        "datas": {
+            "creation_date": date_cle,
+            "vm_ip": vm_ip,
+            "user": user,
+            "password": password,
+            "repo_url": repo_url
+        },
+        "logs": {
+            date_cle: {step.name: step.status for step in steps}
+        }
+    }
+    with open(file_name, "w") as f:
+        json.dump(pipeline, f, indent=4)
+
+    # pipeline = Pipeline(steps, file_name)
+    # pipeline.save_state()
+    
+    return jsonify({"message": "Pipeline crée"})
 
 # Création de la pipeline
 # pipeline = Pipeline(steps)
@@ -280,9 +306,22 @@ def create_pipeline():
 def run_process(repo_url, data):
     try:
         file_name = extract_repo_info(repo_url)
+
+        try:
+            with open(file_name, "r+") as f:
+                pipeline = json.load(f)
+                date_actuelle = datetime.now()
+                date_cle = date_actuelle.strftime("%Y-%m-%d %H:%M:%S")
+                pipeline["logs"][date_cle] = {step.name: step.status for step in steps}
+                json.dump(pipeline, f, indent=4)
+        except FileNotFoundError:
+            print(f"Erreur dans le processus de pipeline pour {repo_url}: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+
         pipeline = Pipeline(steps, file_name)
-        pipeline.load_state()
-        pipeline.run(data)
+        # pipeline.load_state()
+        # pipeline.run(data)
+        return jsonify({"status": "validé"}), 200
     except Exception as e:
         print(f"Erreur dans le processus de pipeline pour {repo_url}: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
