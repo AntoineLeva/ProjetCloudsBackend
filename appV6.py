@@ -51,9 +51,11 @@ class Step:
             self.status = "running"
             self.function(data)
             self.status = "success"
+            return True
         except Exception as e:
             self.status = "failed"
             print(f"Step '{self.name}' failed: {e}")
+            return False
 
 def remove_readonly(func, path, _):
     """Change les permissions et supprime les fichiers en lecture seule."""
@@ -187,49 +189,29 @@ def lauch_docker_compose(data):
 
 def sonar_qube(data):
     print(f"Vérficiation des tests sonarQube")
-    maven_command = f'mvn sonar:sonar -Dsonar.host.url=http://localhost:9000/ -Dsonar.login=sqp_3cd56b2f5f80408d3f4925a724fb1e737c58f143 -X -f /home/imt/repo/pom.xml'
-    # maven_command = f'mvn sonar:sonar -Dsonar.host.url=http://localhost:9000/ -Dsonar.login=sqp_3cd56b2f5f80408d3f4925a724fb1e737c58f143'
+    maven_command = f'mvn sonar:sonar -Dsonar.host.url=http://localhost:9000/ -Dsonar.login=sqa_ef1af10d966155e1d893438d8d7b3e23a97dd168 -X -f ../temp_repo/pom.xml'
+    
     try:
-        # Création d'un client SSH
-        ssh = paramiko.SSHClient()
+        exit_code = os.system(maven_command)
 
-        # Ajouter la clé de l'hôte si nécessaire
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-        # Connexion à la VM via SSH
-        ssh.connect(data.vm_ip, username=data.user, password=data.password)
-
-        # Exécution de la commande Maven sur la VM
-        stdin, stdout, stderr = ssh.exec_command(maven_command)
-
-        # Récupérer la sortie et l'erreur
-        output = stdout.read().decode('utf-8')
-        error = stderr.read().decode('utf-8')
-
-        if error:
-            print("Erreur Maven :")
-            print(error)
-            raise error
+        if (exit_code == 0):
+            print("Tests réussis sonar!")
         else:
-            print(output)
-
-        # Fermer la connexion SSH
-        ssh.close()
+            raise Exception("Tests sonar non passés.")
             
     except Exception as e:
-        raise e
+        raise Exception("Tests sonar non passés.")
 
 # Définition des étapes
 steps = [
-    Step("Cloner le dépôt GitHub", clone_repository),
-    Step("Cloner le dépôt GitHub 2", clone_repository),
-    # Step("Vérifier les tests unitaires", verif_TU),
-    # Step("Transfert du code sur la VM", transfer_to_vm),
-    # Step("Arrêt et suppression des conteneurs en cours sur la VM", stop_delete_docker_container),
-    # Step("Créer un backup de l'image existante", create_backup),
-    # Step("Supprimer l'ancienne image", delete_image_copy),
-    # Step("Lancement de Docker Compose sur la VM", lauch_docker_compose),
-    # Step("Vérification de SonarQube", sonar_qube)
+    Step("1-Cloner le dépôt GitHub", clone_repository),
+    Step("2-Vérification de SonarQube", sonar_qube),
+    Step("3-Vérifier les tests unitaires", verif_TU),
+    Step("4-Transfert du code sur la VM", transfer_to_vm),
+    Step("5-Arrêt et suppression des conteneurs en cours sur la VM", stop_delete_docker_container),
+    Step("6-Créer un backup de l'image existante", create_backup),
+    Step("7-Supprimer l'ancienne image", delete_image_copy),
+    Step("8-Lancement de Docker Compose sur la VM", lauch_docker_compose),
 ]
 
 pipelines_dir = 'pipelines'
@@ -257,18 +239,18 @@ class Pipeline:
             pass
 
     def load_state(self):
-        try:
-            with open(self.state_file, "r") as f:
-                pipeline = json.load(f)
+        # try:
+            # with open(self.state_file, "r") as f:
+            #     pipeline = json.load(f)
                 # if date == "":
-                for step in self.steps:
-                    step.status = "pending"
+        for step in self.steps:
+            step.status = "pending"
                 # else:
                     # log = pipeline["logs"][date]
                     # for step in self.steps:
                     #     step.status = log[step.name]
-        except FileNotFoundError:
-            pass
+        # except FileNotFoundError:
+        #     pass
 
     def run(self, data):
         try:
@@ -283,20 +265,24 @@ class Pipeline:
 
             with open(self.state_file, "w") as f:
                 json.dump(pipeline, f, indent=4)
+
+            self.save_state()
         except FileNotFoundError:
             pass
+        dontstoptest = True
         for step in self.steps:
-            if step.status in ["pending", "failed"]:
-                try:
-                    step.run(data)
-                except:
-                    return jsonify({"status": "error", "message": "erreur"}), 500 
-                finally:
-                    self.save_state()
+            if (step.status in ["pending", "failed"]) and dontstoptest:
+                # try:
+                dontstoptest = step.run(data)
+                # except:
+                #     print("erreur dans la pipeline")
+                #     stoptest = True
+                # finally:
+                self.save_state()
 
 def run_process(repo_url, data):
     try:
-        file_name = os.path.join(pipelines_dir, extract_repo_info(repo_url))
+        file_name = os.path.join(os.path.join(os.getcwd(),'pipelines'), extract_repo_info(repo_url))
 
         pipeline = Pipeline(steps, file_name)
         pipeline.run(data)
@@ -404,7 +390,41 @@ def get_all_pipelines():
                 print(f"Erreur de lecture du fichier {file_name}: {e}")
 
     return {"pipelines": all_data}
+
+def get_pipeline_logs(file_name):
+    try:
+        # Lire le contenu du fichier JSON
+        with open(file_name, 'r') as file:
+            pipeline = json.load(file)
+        
+        # Vérifier si les logs existent dans le fichier
+        if 'logs' in pipeline:
+            return pipeline['logs']
+        else:
+            raise ValueError("Aucun log trouvé dans ce pipeline.")
+    except FileNotFoundError:
+        print(f"Erreur : Le fichier '{file_name}' est introuvable.")
+    except json.JSONDecodeError:
+        print(f"Erreur : Le fichier '{file_name}' n'est pas un fichier JSON valide.")
+    except Exception as e:
+        print(f"Erreur : {e}")
+
+
+@app.route('/get-pipeline-details', methods=['GET'])
+def get_pipeline_details():
+    pipeline_id = request.args.get('id')
+
     
+    fichier = pipeline_id+".json"
+    file = os.path.join(os.getcwd(),pipelines_dir)
+    file_path = os.path.join(file, fichier)
+ 
+    pipeline = get_pipeline_logs(file_path)
+    
+    if pipeline:
+        return jsonify(pipeline)
+    else:
+        return jsonify({"error": "Pipeline introuvable"}), 404
 
 @app.route('/get-pipeline-status', methods=['POST'])
 def get_pipeline_status():
